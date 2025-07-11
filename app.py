@@ -1,27 +1,23 @@
 import streamlit as st
-from transformers import pipeline, AutoTokenizer, AutoModelForSequenceClassification, AutoModelForMaskedLM
-import spacy
+from transformers import pipeline
 import networkx as nx
 import matplotlib.pyplot as plt
-from PIL import Image
-import torch
 
-# Load models (replace with your preferred or custom fine-tuned models)
+# Load models (cached for performance)
 @st.cache_resource
-def load_models():
-    # Sentence classification (example: 5 environmental categories)
-    classifier = pipeline("text-classification", model="bhadresh-savani/distilbert-base-uncased-emotion")
+def load_pipelines():
+    # Sentence classification: Replace with your environmental classifier or use zero-shot
+    classifier = pipeline("zero-shot-classification", model="facebook/bart-large-mnli")
     # NER
-    nlp = spacy.load("en_core_web_sm")
-    # Masked LM (fill the blank)
+    ner = pipeline("ner", grouped_entities=True)
+    # Masked LM
     mask_filler = pipeline("fill-mask", model="bert-base-uncased")
-    return classifier, nlp, mask_filler
+    return classifier, ner, mask_filler
 
-classifier, nlp, mask_filler = load_models()
+classifier, ner, mask_filler = load_pipelines()
 
-st.title("Environmental NLP & Image Generation App")
+st.title("Environmental NLP & Image Generation App (No spaCy)")
 
-# Sidebar for navigation
 task = st.sidebar.selectbox(
     "Choose a task",
     [
@@ -35,13 +31,12 @@ task = st.sidebar.selectbox(
 if task == "Sentence Classification":
     st.header("Sentence Classification (Environmental Categories)")
     text = st.text_area("Enter a sentence related to environment, energy, pollution, etc.")
+    labels = ["Climate Change", "Pollution", "Wildlife", "Renewable Energy", "Waste Management"]
     if st.button("Classify"):
         if text:
-            # Example: using a generic classifier, replace with your fine-tuned environmental classifier
-            preds = classifier(text, top_k=5)
-            st.write("Predicted categories and scores:")
-            for pred in preds:
-                st.write(f"**{pred['label']}**: {pred['score']:.2f}")
+            result = classifier(text, labels)
+            for label, score in zip(result['labels'], result['scores']):
+                st.write(f"**{label}**: {score:.2f}")
         else:
             st.warning("Please enter a sentence.")
 
@@ -50,7 +45,6 @@ elif task == "Image Generation":
     prompt = st.text_input("Describe the environmental image you want to generate (e.g., 'A forest with clean river')")
     if st.button("Generate Image"):
         if prompt:
-            # Example: use Stable Diffusion or similar model if available
             from diffusers import StableDiffusionPipeline
             import torch
             sd_pipe = StableDiffusionPipeline.from_pretrained("runwayml/stable-diffusion-v1-5").to("cpu")
@@ -64,21 +58,18 @@ elif task == "NER Graph Map":
     ner_text = st.text_area("Enter text to extract entities and visualize relationships.")
     if st.button("Extract & Visualize NER"):
         if ner_text:
-            doc = nlp(ner_text)
-            entities = [(ent.text, ent.label_) for ent in doc.ents]
+            entities = ner(ner_text)
             st.write("Extracted Entities:")
-            for ent, label in entities:
-                st.write(f"**{ent}** ({label})")
-            # Create a simple entity graph
+            for ent in entities:
+                st.write(f"**{ent['word']}** ({ent['entity_group']})")
+            # Build entity graph
             G = nx.Graph()
-            for ent, label in entities:
-                G.add_node(ent, label=label)
-            # Example: connect entities that appear in the same sentence
-            for sent in doc.sents:
-                ents_in_sent = [ent.text for ent in sent.ents]
-                for i in range(len(ents_in_sent)):
-                    for j in range(i + 1, len(ents_in_sent)):
-                        G.add_edge(ents_in_sent[i], ents_in_sent[j])
+            for ent in entities:
+                G.add_node(ent['word'], label=ent['entity_group'])
+            # Simple: connect all entities found in this text
+            for i in range(len(entities)):
+                for j in range(i + 1, len(entities)):
+                    G.add_edge(entities[i]['word'], entities[j]['word'])
             plt.figure(figsize=(8, 6))
             nx.draw(G, with_labels=True, node_color='lightgreen', font_size=10)
             st.pyplot(plt)
